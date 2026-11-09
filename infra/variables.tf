@@ -72,3 +72,9 @@ variable "db_backup_retention_days" {
   type        = number
   default     = 1
 }
+
+variable "enable_github_oidc" {
+  description = "Створити OIDC-провайдер і роль для GitHub Actions. У новому режимі AWS (проєкти, Free/Paid plan) це заборонено SCP, тому за замовчуванням вимкнено"
+  type        = bool
+  default     = false
+}

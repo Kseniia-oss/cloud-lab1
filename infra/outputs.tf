@@ -10,7 +10,7 @@ output "swagger_url" {
 
 output "github_actions_role_arn" {
   description = "Вставити в GitHub: Settings → Secrets and variables → Actions → Variables → AWS_ROLE_ARN"
-  value       = aws_iam_role.github_actions.arn
+  value       = var.enable_github_oidc ? aws_iam_role.github_actions[0].arn : null
 }
 
 output "ecr_repository_url" {

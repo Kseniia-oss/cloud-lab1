@@ -1,15 +1,19 @@
 resource "aws_iam_openid_connect_provider" "github" {
+  count = var.enable_github_oidc ? 1 : 0
+
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
 }
 
 data "aws_iam_policy_document" "github_trust" {
+  count = var.enable_github_oidc ? 1 : 0
+
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github[0].arn]
     }
 
     condition {
@@ -27,8 +31,10 @@ data "aws_iam_policy_document" "github_trust" {
 }
 
 resource "aws_iam_role" "github_actions" {
+  count = var.enable_github_oidc ? 1 : 0
+
   name               = "${local.name}-github-actions"
-  assume_role_policy = data.aws_iam_policy_document.github_trust.json
+  assume_role_policy = data.aws_iam_policy_document.github_trust[0].json
 }
 
 data "aws_iam_policy_document" "github_deploy" {
@@ -81,7 +87,9 @@ data "aws_iam_policy_document" "github_deploy" {
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
+  count = var.enable_github_oidc ? 1 : 0
+
   name   = "deploy-to-ecs"
-  role   = aws_iam_role.github_actions.id
+  role   = aws_iam_role.github_actions[0].id
   policy = data.aws_iam_policy_document.github_deploy.json
 }

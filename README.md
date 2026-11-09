@@ -2,10 +2,10 @@
 
 REST API для списку задач (to-do) з реєстрацією та JWT-автентифікацією.
 Запакований у Docker, розгорнутий в **AWS** (ECS Fargate + RDS PostgreSQL за Application Load Balancer),
-уся інфраструктура описана в **Terraform**, деплой — автоматично з **GitHub Actions** через **OIDC**.
+уся інфраструктура описана в **Terraform**, тести й перевірка Terraform запускаються в **GitHub Actions**.
 
-**Публічна адреса:** http://ВСТАВИТИ-ВИХІД-app_url-ПІСЛЯ-terraform-apply
-**Swagger UI:** http://ВСТАВИТИ-ВИХІД-app_url/docs
+**Публічна адреса:** http://tasks-api-alb-698321018.eu-north-1.elb.amazonaws.com
+**Swagger UI:** http://tasks-api-alb-698321018.eu-north-1.elb.amazonaws.com/docs
 
 ## Стек
 
@@ -50,7 +50,7 @@ flowchart LR
 
 | Метод | Шлях | Опис | Авторизація |
 |---|---|---|---|
-| GET | `/` | Інформація про сервіс і версію (хеш коміту) | — |
+| GET | `/` | Інформація про сервіс і версію | — |
 | GET | `/health` | Health check (застосунок + база) | — |
 | GET | `/docs` | Swagger UI (OpenAPI: `/openapi.json`) | — |
 | POST | `/auth/register` | Реєстрація `{username, password}` | — |
@@ -95,7 +95,7 @@ flowchart LR
 │   ├── iam.tf                    # Ролі ECS (execution / task)
 │   ├── ecs.tf                    # Кластер, task definition, сервіс, логи
 │   ├── alb.tf                    # Load balancer, target group, health check
-│   ├── github_oidc.tf            # OIDC-провайдер і роль для GitHub Actions
+│   ├── github_oidc.tf            # OIDC для GitHub Actions (вимкнено, див. «CI/CD»)
 │   └── monitoring.tf             # Дашборд, алерти, SNS → email
 ├── .github/workflows/deploy.yml  # CI/CD
 ├── compose.yaml                  # Локальний запуск: app + PostgreSQL
@@ -114,7 +114,7 @@ docker compose up --build   # застосунок + PostgreSQL
 Відкрийте http://localhost:8000/docs. Дані бази лежать у volume `pgdata` і переживають `docker compose down`
 (видаляються лише через `docker compose down -v`).
 
-Тести: `cd app && pip install -r requirements-dev.txt && pytest` (потрібна запущена PostgreSQL і змінні `DB_*`, `JWT_SECRET`).
+Тести: `cd app && pip install -r requirements-dev.txt && python -m pytest` (потрібна запущена PostgreSQL і змінні `DB_*`, `JWT_SECRET`).
 
 ## Розгортання в AWS (завдання 2–7)
 
@@ -128,28 +128,41 @@ terraform apply -target=aws_budgets_budget.monthly   # бюджет — перш
 terraform apply                                       # уся інфраструктура
 ```
 
-Далі в GitHub → Settings → Secrets and variables → Actions → **Variables**:
-`AWS_ROLE_ARN` = вихід `github_actions_role_arn`, `APP_URL` = вихід `app_url`.
-Потім Actions → CI/CD → Run workflow (перший деплой). Кожен наступний push у `main` деплоїться автоматично.
+Доступ до AWS з терміналу — через `aws login` (тимчасові облікові дані на 12 годин, без довготривалих ключів).
+
+### Деплой застосунку
+
+Образ збирається локально і завантажується в ECR, після чого ECS перезапускає задачі з новим образом
+(rolling update: нові задачі стартують, проходять health check, і лише потім зупиняються старі):
+
+```bash
+ECR=401844780186.dkr.ecr.eu-north-1.amazonaws.com
+aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR
+docker build --platform linux/amd64 -t $ECR/tasks-api:bootstrap ./app
+docker push $ECR/tasks-api:bootstrap
+aws ecs update-service --cluster tasks-api --service tasks-api --force-new-deployment
+```
 
 Видалення всього: `terraform destroy`.
 
 ## CI/CD (завдання 5)
 
-`.github/workflows/deploy.yml`:
+`.github/workflows/deploy.yml` на кожен push у `main`:
 
 1. **test** — pytest проти справжньої PostgreSQL (service container).
 2. **terraform** — `fmt -check` і `validate`.
-3. **deploy** (тільки `main`):
-   OIDC → тимчасові креденшали ролі `tasks-api-github-actions` →
-   `docker build` → push в ECR з тегом **= хеш коміту** →
-   нова ревізія task definition з цим образом і `APP_VERSION=<sha>` →
-   оновлення ECS-сервісу (rolling update, очікування стабільності) → smoke test.
+3. **deploy** — підготовлений, але **не запускається**.
 
-Довговічних ключів AWS у GitHub немає. Trust policy ролі пускає лише `repo:<owner>/<repo>:ref:refs/heads/main`.
+Акаунт створено через новий режим реєстрації AWS (проєкти, Free plan). Service control policy цього режиму
+(`DenyIAMRestrictedActions`) забороняє `iam:*Provider*`, тому OIDC-провайдер для GitHub створити неможливо,
+а зберігати довготривалі ключі AWS у GitHub небезпечно. Тому деплой виконується вручну (команди вище).
 
-Відкат: деплой попереднього образу (`Re-run` старого workflow, або нова ревізія task definition з попереднім тегом).
-Крім того, ECS deployment circuit breaker сам відкочує версію, яка не проходить health check.
+Код OIDC збережено в `infra/github_oidc.tf` за перемикачем `enable_github_oidc` (за замовчуванням `false`).
+Після переходу на Paid plan і активації advanced features достатньо `enable_github_oidc = true` у `terraform.tfvars`,
+`terraform apply` і змінної `AWS_ROLE_ARN` у GitHub — і job **deploy** почне працювати: OIDC → тимчасові
+облікові дані ролі → збірка образу з тегом = хеш коміту → push в ECR → нова ревізія task definition → оновлення ECS.
+
+Захист від невдалого релізу: ECS deployment circuit breaker відкочує версію, яка не проходить health check.
 
 ## Моніторинг (завдання 7)
 
@@ -166,7 +179,7 @@ terraform apply                                       # уся інфрастр�
 | 2. Terraform | `infra/*.tf`: ECR, RDS, ECS Fargate; підключення до бази — env + Secrets Manager |
 | 3. Мережева ізоляція | `network.tf`, `security_groups.tf`, `rds.tf` (`publicly_accessible = false`) |
 | 4. Load balancer | `alb.tf` (health check `/health`), контейнери без публічних IP |
-| 5. CD | `.github/workflows/deploy.yml`, `github_oidc.tf` |
+| 5. CD | CI в `.github/workflows/deploy.yml`; деплой вручну (OIDC заблоковано SCP, код у `github_oidc.tf`) |
 | 6. Безпека доступу | JWT (`app/app/security.py`), 401 без токена, ключ підпису в Secrets Manager |
 | 7. Моніторинг | `monitoring.tf`, логи в `ecs.tf` |
 | 8. Документація API | Swagger UI на `/docs` |
