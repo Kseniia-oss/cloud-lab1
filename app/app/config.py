@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
 
     app_version: str = "local"
+    tasks_cache_enabled: bool = False
+    idempotency_redis_url: str = ""
+    tasks_queue_url: str = ""
 
     @property
     def database_url(self) -> URL:

@@ -38,3 +38,8 @@ output "db_password_secret_arn" {
 output "dashboard_url" {
   value = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards/dashboard/${aws_cloudwatch_dashboard.main.dashboard_name}"
 }
+
+output "app_task_definition_arn" {
+  description = "Ревізія застосунку з параметрами кешу для лабораторної 2"
+  value       = aws_ecs_task_definition.app.arn
+}

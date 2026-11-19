@@ -1,9 +1,15 @@
-from fastapi import APIRouter, HTTPException, Response, status
+from time import monotonic
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Response, status
 from sqlalchemy import select
 
+from app.config import get_settings
+from app.idempotency import create_task_once
 from app.models import Task
 from app.schemas import TaskCreate, TaskOut, TaskUpdate
 from app.security import CurrentUser, DbSession
+from app.tasks_cache import cache_tasks, read_tasks
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -16,15 +22,41 @@ def _get_own_task(task_id: int, user, db) -> Task:
 
 
 @router.get("", response_model=list[TaskOut])
-def list_tasks(user: CurrentUser, db: DbSession, done: bool | None = None):
+def list_tasks(
+    response: Response, user: CurrentUser, db: DbSession, done: bool | None = None
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    cache_enabled = get_settings().tasks_cache_enabled
+    cache_key = (user.id, done)
+    if cache_enabled:
+        cached = read_tasks(cache_key)
+        if cached is not None:
+            response.headers["X-Tasks-Cache"] = "HIT"
+            return cached
+
+    started_at = monotonic()
     query = select(Task).where(Task.owner_id == user.id).order_by(Task.id)
     if done is not None:
         query = query.where(Task.done == done)
-    return db.scalars(query).all()
+    tasks = db.scalars(query).all()
+    response.headers["X-Tasks-Cache"] = "MISS" if cache_enabled else "BYPASS"
+    if not cache_enabled:
+        return tasks
+
+    result = [TaskOut.model_validate(task) for task in tasks]
+    cache_tasks(cache_key, result, started_at)
+    return result
 
 
 @router.post("", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
-def create_task(data: TaskCreate, user: CurrentUser, db: DbSession):
+def create_task(
+    data: TaskCreate,
+    user: CurrentUser,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None,
+):
+    if idempotency_key is not None:
+        return create_task_once(db, user.id, idempotency_key, data)
     task = Task(title=data.title, description=data.description, owner_id=user.id)
     db.add(task)
     db.commit()

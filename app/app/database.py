@@ -17,11 +17,19 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 
 def init_db() -> None:
-    from app.models import Task, User
+    from app.models import Task, TaskQueueReceipt, TaskWriteReceipt, User
 
     with engine.begin() as conn:
         conn.execute(text("SELECT pg_advisory_xact_lock(727001)"))
-        Base.metadata.create_all(conn, tables=[User.__table__, Task.__table__])
+        Base.metadata.create_all(
+            conn,
+            tables=[
+                User.__table__,
+                Task.__table__,
+                TaskWriteReceipt.__table__,
+                TaskQueueReceipt.__table__,
+            ],
+        )
 
 
 def get_db() -> Generator[Session, None, None]:

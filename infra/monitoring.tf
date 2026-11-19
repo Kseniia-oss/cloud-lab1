@@ -49,11 +49,11 @@ resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = local.name
 
   dashboard_body = jsonencode({
-    widgets = [
+    widgets = concat([
       {
         type = "metric", x = 0, y = 0, width = 12, height = 6
         properties = {
-          title   = "Кількість запитів"
+          title   = "Кількість запитів за хвилину"
           region  = var.aws_region
           stat    = "Sum"
           period  = 60
@@ -78,56 +78,56 @@ resource "aws_cloudwatch_dashboard" "main" {
       {
         type = "metric", x = 0, y = 6, width = 12, height = 6
         properties = {
-          title  = "Латентність (секунди)"
+          title  = "Латентність ALB p95 (секунди)"
           region = var.aws_region
           period = 60
           view   = "timeSeries"
           metrics = [
-            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.main.arn_suffix, { stat = "p50", label = "p50" }],
             ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.main.arn_suffix, { stat = "p95", label = "p95" }],
-            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", aws_lb.main.arn_suffix, { stat = "p99", label = "p99" }],
           ]
         }
       },
       {
         type = "metric", x = 12, y = 6, width = 12, height = 6
         properties = {
-          title  = "ECS: CPU і пам'ять (%)"
+          title  = "ECS: середнє завантаження CPU (%)"
           region = var.aws_region
           stat   = "Average"
           period = 60
           view   = "timeSeries"
           metrics = [
-            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.app.name, { label = "CPU" }],
-            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.app.name, { label = "Memory" }],
+            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.app.name],
           ]
-          yAxis = { left = { min = 0, max = 100 } }
+          annotations = { horizontal = [{ value = local.scale_target_cpu, label = "Ціль масштабування" }] }
+          yAxis       = { left = { min = 0, max = 100 } }
         }
       },
       {
         type = "metric", x = 0, y = 12, width = 12, height = 6
         properties = {
-          title  = "Здорові / нездорові екземпляри"
+          title  = "ECS: бажана і фактична кількість завдань"
           region = var.aws_region
-          stat   = "Minimum"
+          stat   = "Average"
           period = 60
           view   = "timeSeries"
           metrics = [
-            ["AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.app.arn_suffix],
-            ["AWS/ApplicationELB", "UnHealthyHostCount", "LoadBalancer", aws_lb.main.arn_suffix, "TargetGroup", aws_lb_target_group.app.arn_suffix],
+            ["ECS/ContainerInsights", "DesiredTaskCount", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.app.name, { label = "Бажана" }],
+            ["ECS/ContainerInsights", "RunningTaskCount", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.app.name, { label = "Фактична" }],
           ]
+          yAxis = { left = { min = 0 } }
         }
       },
       {
         type = "metric", x = 12, y = 12, width = 12, height = 6
         properties = {
-          title  = "RDS: CPU (%) і з'єднання"
+          title  = "RDS: CPU (%), ReadIOPS і з'єднання"
           region = var.aws_region
           stat   = "Average"
           period = 60
           view   = "timeSeries"
           metrics = [
             ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", aws_db_instance.main.identifier],
+            ["AWS/RDS", "ReadIOPS", "DBInstanceIdentifier", aws_db_instance.main.identifier, { yAxis = "right" }],
             ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", aws_db_instance.main.identifier, { yAxis = "right" }],
           ]
         }
@@ -141,6 +141,33 @@ resource "aws_cloudwatch_dashboard" "main" {
           query  = "SOURCE '${aws_cloudwatch_log_group.app.name}' | fields @timestamp, @message | filter @message like /ERROR|Traceback| status=5/ | sort @timestamp desc | limit 50"
         }
       },
-    ]
+      ], flatten([for index, queue in aws_sqs_queue.tasks : [
+        {
+          type = "metric", x = 0, y = 24, width = 12, height = 6
+          properties = {
+            title  = "SQS: повідомлення в черзі та в обробці"
+            region = var.aws_region
+            period = 60
+            stat   = "Maximum"
+            metrics = [
+              ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", queue.name, { label = "У черзі" }],
+              ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", queue.name, { label = "В обробці" }],
+            ]
+          }
+        },
+        {
+          type = "metric", x = 12, y = 24, width = 12, height = 6
+          properties = {
+            title  = "ECS: кількість обробників черги"
+            region = var.aws_region
+            period = 60
+            stat   = "Average"
+            metrics = [
+              ["ECS/ContainerInsights", "DesiredTaskCount", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.queue_worker[index].name, { label = "Бажана" }],
+              ["ECS/ContainerInsights", "RunningTaskCount", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.queue_worker[index].name, { label = "Фактична" }],
+            ]
+          }
+        },
+    ]]))
   })
 }

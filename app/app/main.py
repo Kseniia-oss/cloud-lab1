@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine, init_db
-from app.routers import auth, tasks
+from app.routers import auth, task_jobs, tasks
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -41,11 +41,12 @@ async def access_log(request: Request, call_next):
         response = JSONResponse({"detail": "Internal Server Error"}, status_code=500)
     if request.url.path != "/health":
         log.info(
-            "request method=%s path=%s status=%s duration_ms=%.1f",
+            "request method=%s path=%s status=%s duration_ms=%.1f tasks_cache=%s",
             request.method,
             request.url.path,
             response.status_code,
             (time.perf_counter() - start) * 1000,
+            response.headers.get("X-Tasks-Cache", "-"),
         )
     return response
 
@@ -75,3 +76,4 @@ def health():
 
 app.include_router(auth.router)
 app.include_router(tasks.router)
+app.include_router(task_jobs.router)

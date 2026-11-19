@@ -38,9 +38,9 @@ variable "vpc_cidr" {
 }
 
 variable "app_desired_count" {
-  description = "Кількість екземплярів застосунку (2 — по одному в кожній AZ)"
+  description = "Початкова кількість екземплярів до реєстрації політики масштабування"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "app_cpu" {

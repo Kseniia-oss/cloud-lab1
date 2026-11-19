@@ -5,6 +5,11 @@ resource "aws_cloudwatch_log_group" "app" {
 
 resource "aws_ecs_cluster" "main" {
   name = local.name
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 resource "aws_ecs_task_definition" "app" {
@@ -34,6 +39,10 @@ resource "aws_ecs_task_definition" "app" {
       { name = "DB_NAME", value = aws_db_instance.main.db_name },
       { name = "DB_USER", value = aws_db_instance.main.username },
       { name = "APP_VERSION", value = var.image_tag },
+      { name = "TASKS_CACHE_ENABLED", value = tostring(var.tasks_cache_enabled) },
+      { name = "AWS_DEFAULT_REGION", value = var.aws_region },
+      { name = "TASKS_QUEUE_URL", value = var.enable_task_queue ? aws_sqs_queue.tasks[0].url : "" },
+      { name = "IDEMPOTENCY_REDIS_URL", value = var.enable_idempotency ? "rediss://${aws_elasticache_serverless_cache.idempotency[0].endpoint[0].address}:${aws_elasticache_serverless_cache.idempotency[0].endpoint[0].port}/0" : "" },
     ]
 
     secrets = [
@@ -82,7 +91,7 @@ resource "aws_ecs_service" "app" {
   }
 
   lifecycle {
-    ignore_changes = [task_definition]
+    ignore_changes = [task_definition, desired_count]
   }
 
   depends_on = [aws_lb_listener.http]
